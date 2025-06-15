@@ -1,0 +1,391 @@
+# --- Processamento do Corpus do Português Brasileiro (Mark Davies) ---
+
+install.packages("quanteda")
+install.packages("readtext")
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("pdftools") # Para ler PDFs
+install.packages("stringr") # Para manipulação de strings
+install.packages("tibble") # Para manipulação de data frames tidy
+
+library(quanteda)
+library(readtext)
+library(dplyr)
+library(ggplot2)
+library(pdftools)
+library(stringr)
+library(tibble) # Necessário para as_tibble
+
+
+
+
+#PARTE 1 DO PROJETO 
+
+
+
+
+
+# 1. Carregamento do Corpus
+
+# ATENÇÃO: Substitua "caminho/para/seu/corpus_portugues_brasileiro.txt" pelo caminho REAL do seu arquivo.
+# Se o seu corpus for muito grande e estiver em múltiplos arquivos TXT, você pode
+# usar 'readtext::readtext("caminho/para/pasta_do_corpus/*.txt")'
+# Para este exemplo, assumimos um único arquivo TXT.
+tryCatch({
+  corpus_br_raw <- readtext::readtext("caminho/para/seu/corpus_portugues_brasileiro.txt")
+}, error = function(e) {
+  stop("Erro ao carregar o Corpus do Português Brasileiro. Verifique o caminho do arquivo e se ele existe. Detalhes do erro: ", e$message)
+})
+
+
+# Criar um objeto 'corpus' do pacote quanteda a partir do texto lido.
+# O 'quanteda' é otimizado para trabalhar com grandes volumes de texto.
+corpus_quanteda_br <- quanteda::corpus(corpus_br_raw)
+
+# 2. Tokenização e Limpeza do Texto
+# A tokenização é o processo de dividir o texto em unidades menores (palavras, frases, etc.).
+# Aqui, removeremos pontuação, números, símbolos e converteremos tudo para minúsculas.
+# Também removeremos as "stopwords", que são palavras muito comuns (ex: "de", "a", "o")
+# que geralmente não adicionam muito valor à análise de frequência.
+tokens_br <- quanteda::tokens(corpus_quanteda_br,
+                              what = "word",
+                              remove_punct = TRUE,
+                              remove_numbers = TRUE,
+                              remove_symbols = TRUE) %>%
+  quanteda::tokens_tolower() %>%
+  # Remover stopwords em português. 'quanteda' já vem com uma lista para "pt".
+  quanteda::tokens_remove(quanteda::stopwords("pt"))
+
+# Opcional: Remover palavras muito curtas (ex: letras soltas que podem ter escapado) ou muito longas.
+# Um comprimento mínimo de 2 caracteres geralmente é bom para eliminar ruído.
+tokens_br <- quanteda::tokens_keep(tokens_br, min_nchar = 2)
+
+# 3. Contagem de Frequência das Palavras (Document-Feature Matrix - DFM)
+# Uma DFM é uma matriz onde linhas são documentos e colunas são palavras (features),
+# e os valores são as contagens de ocorrência.
+dfm_br <- quanteda::dfm(tokens_br)
+
+# Converter a DFM em um data frame tidy para fácil manipulação e visualização.
+# 'textstat_frequency' extrai as frequências de forma conveniente.
+freq_br <- tibble::as_tibble(quanteda::textstat_frequency(dfm_br)) %>%
+  dplyr::select(feature, frequency) %>%
+  # Renomear as colunas para clareza na comparação posterior.
+  dplyr::rename(word = feature, freq_corpus_br = frequency)
+
+# Exibir as 20 palavras mais frequentes do Corpus do Português Brasileiro
+cat("As 20 palavras mais frequentes no Corpus do Português Brasileiro:\n")
+print(head(freq_br, 20))
+
+
+
+
+
+#PARTE 2 DO PROJETO 
+
+
+
+
+# --- Processamento do Seu Corpus Pessoal (Poesia e Prosa) ---
+
+
+# Função auxiliar para ler PDFs de um diretório, tokenizar e contar frequências.
+# Esta função encapsula os passos de leitura, limpeza e contagem.
+processar_corpus_diretorio <- function(diretorio_corpus, nome_corpus) {
+  cat(sprintf("\nProcessando corpus de %s...\n", nome_corpus))
+  # Listar todos os arquivos PDF no diretório especificado.
+  arquivos_pdf <- list.files(path = diretorio_corpus, pattern = "\\.pdf$", full.names = TRUE)
+  
+  if (length(arquivos_pdf) == 0) {
+    # Se nenhum PDF for encontrado, avisa o usuário e retorna um data frame vazio.
+    warning(sprintf("Nenhum arquivo PDF encontrado no diretório: %s. Verifique o caminho ou se os arquivos existem.", diretorio_corpus))
+    return(tibble::tibble(word = character(), frequency = numeric()))
+  }
+  
+  # Ler o texto de cada PDF. O pdftools::pdf_text() extrai o texto de cada página.
+  # Usamos paste(collapse = " ") para unir o texto de todas as páginas em uma única string por livro.
+  lista_textos <- lapply(arquivos_pdf, function(arquivo) {
+    tryCatch({
+      # Extrair texto do PDF e colapsar em uma única string.
+      pdftools::pdf_text(arquivo) %>%
+        paste(collapse = " ")
+    }, error = function(e) {
+      # Captura erros na leitura de PDFs e informa qual arquivo teve problema.
+      warning(sprintf("Erro ao ler PDF '%s': %s", arquivo, e$message))
+      return("") # Retorna string vazia para arquivos com erro.
+    })
+  })
+  
+  # Filtrar qualquer entrada que tenha resultado em uma string vazia (erros de leitura).
+  texto_completo <- unlist(lista_textos)
+  texto_completo <- texto_completo[texto_completo != ""]
+  
+  if (length(texto_completo) == 0) {
+    warning(sprintf("Nenhum texto válido extraído dos PDFs em: %s", diretorio_corpus))
+    return(tibble::tibble(word = character(), frequency = numeric()))
+  }
+  
+  # Criar um objeto 'corpus' do quanteda com o texto combinado.
+  corpus_quanteda <- quanteda::corpus(texto_completo)
+  
+  # Tokenização e Limpeza (mesmos passos do corpus de referência).
+  tokens <- quanteda::tokens(corpus_quanteda,
+                             what = "word",
+                             remove_punct = TRUE,
+                             remove_numbers = TRUE,
+                             remove_symbols = TRUE) %>%
+    quanteda::tokens_tolower() %>%
+    quanteda::tokens_remove(quanteda::stopwords("pt"))
+  
+  tokens <- quanteda::tokens_keep(tokens, min_nchar = 2)
+  
+  # Contar Frequência das Palavras.
+  dfm <- quanteda::dfm(tokens)
+  freq_df <- tibble::as_tibble(quanteda::textstat_frequency(dfm)) %>%
+    dplyr::select(feature, frequency) %>%
+    dplyr::rename(word = feature)
+  
+  return(freq_df)
+}
+
+# --- Processar Corpus de Poesia ---
+# ATENÇÃO: Substitua "caminho/para/seu/meu_corpus/poesia" pelo caminho REAL da sua pasta de poesia.
+diretorio_poesia <- "caminho/para/seu/meu_corpus/poesia"
+freq_poesia <- processar_corpus_diretorio(diretorio_poesia, "Poesia") %>%
+  dplyr::rename(freq_poesia = frequency) # Renomeia para 'freq_poesia' para comparação.
+
+cat("\nAs 20 palavras mais frequentes na Poesia:\n")
+print(head(freq_poesia, 20))
+
+
+# --- Processar Corpus de Prosa ---
+# ATENÇÃO: Substitua "caminho/para/seu/meu_corpus/prosa" pelo caminho REAL da sua pasta de prosa.
+diretorio_prosa <- "caminho/para/seu/meu_corpus/prosa"
+freq_prosa <- processar_corpus_diretorio(diretorio_prosa, "Prosa") %>%
+  dplyr::rename(freq_prosa = frequency) # Renomeia para 'freq_prosa' para comparação.
+
+cat("\nAs 20 palavras mais frequentes na Prosa:\n")
+print(head(freq_prosa, 20))
+
+
+
+
+#PARTE 3 DO PROJETO 
+
+
+
+
+# --- Processamento do Seu Corpus Pessoal (Poesia e Prosa) ---
+
+# Função auxiliar para ler PDFs de um diretório, tokenizar e contar frequências.
+# Esta função encapsula os passos de leitura, limpeza e contagem.
+processar_corpus_diretorio <- function(diretorio_corpus, nome_corpus) {
+  cat(sprintf("\nProcessando corpus de %s...\n", nome_corpus))
+  # Listar todos os arquivos PDF no diretório especificado.
+  arquivos_pdf <- list.files(path = diretorio_corpus, pattern = "\\.pdf$", full.names = TRUE)
+  
+  if (length(arquivos_pdf) == 0) {
+    # Se nenhum PDF for encontrado, avisa o usuário e retorna um data frame vazio.
+    warning(sprintf("Nenhum arquivo PDF encontrado no diretório: %s. Verifique o caminho ou se os arquivos existem.", diretorio_corpus))
+    return(tibble::tibble(word = character(), frequency = numeric()))
+  }
+  
+  # Ler o texto de cada PDF. O pdftools::pdf_text() extrai o texto de cada página.
+  # Usamos paste(collapse = " ") para unir o texto de todas as páginas em uma única string por livro.
+  lista_textos <- lapply(arquivos_pdf, function(arquivo) {
+    tryCatch({
+      # Extrair texto do PDF e colapsar em uma única string.
+      pdftools::pdf_text(arquivo) %>%
+        paste(collapse = " ")
+    }, error = function(e) {
+      # Captura erros na leitura de PDFs e informa qual arquivo teve problema.
+      warning(sprintf("Erro ao ler PDF '%s': %s", arquivo, e$message))
+      return("") # Retorna string vazia para arquivos com erro.
+    })
+  })
+  
+  # Filtrar qualquer entrada que tenha resultado em uma string vazia (erros de leitura).
+  texto_completo <- unlist(lista_textos)
+  texto_completo <- texto_completo[texto_completo != ""]
+  
+  if (length(texto_completo) == 0) {
+    warning(sprintf("Nenhum texto válido extraído dos PDFs em: %s", diretorio_corpus))
+    return(tibble::tibble(word = character(), frequency = numeric()))
+  }
+  
+  # Criar um objeto 'corpus' do quanteda com o texto combinado.
+  corpus_quanteda <- quanteda::corpus(texto_completo)
+  
+  # Tokenização e Limpeza (mesmos passos do corpus de referência).
+  tokens <- quanteda::tokens(corpus_quanteda,
+                             what = "word",
+                             remove_punct = TRUE,
+                             remove_numbers = TRUE,
+                             remove_symbols = TRUE) %>%
+    quanteda::tokens_tolower() %>%
+    quanteda::tokens_remove(quanteda::stopwords("pt"))
+  
+  tokens <- quanteda::tokens_keep(tokens, min_nchar = 2)
+  
+  # Contar Frequência das Palavras.
+  dfm <- quanteda::dfm(tokens)
+  freq_df <- tibble::as_tibble(quanteda::textstat_frequency(dfm)) %>%
+    dplyr::select(feature, frequency) %>%
+    dplyr::rename(word = feature)
+  
+  return(freq_df)
+}
+
+# --- Processar Corpus de Poesia ---
+# ATENÇÃO: Substitua "caminho/para/seu/meu_corpus/poesia" pelo caminho REAL da sua pasta de poesia.
+diretorio_poesia <- "caminho/para/seu/meu_corpus/poesia"
+freq_poesia <- processar_corpus_diretorio(diretorio_poesia, "Poesia") %>%
+  dplyr::rename(freq_poesia = frequency) # Renomeia para 'freq_poesia' para comparação.
+
+cat("\nAs 20 palavras mais frequentes na Poesia:\n")
+print(head(freq_poesia, 20))
+
+
+# --- Processar Corpus de Prosa ---
+# ATENÇÃO: Substitua "caminho/para/seu/meu_corpus/prosa" pelo caminho REAL da sua pasta de prosa.
+diretorio_prosa <- "caminho/para/seu/meu_corpus/prosa"
+freq_prosa <- processar_corpus_diretorio(diretorio_prosa, "Prosa") %>%
+  dplyr::rename(freq_prosa = frequency) # Renomeia para 'freq_prosa' para comparação.
+
+cat("\nAs 20 palavras mais frequentes na Prosa:\n")
+print(head(freq_prosa, 20))
+
+
+
+
+#PARTE 4 DO PROJETO
+
+
+
+# --- Comparação e Visualização ---
+
+# 1. Juntar os data frames de frequência
+# Usamos 'full_join' para garantir que todas as palavras que aparecem em qualquer um dos corpora
+# sejam incluídas no resultado final.
+# 'replace(., is.na(.), 0)' preenche com zero as frequências para palavras que não apareceram
+# em um corpus específico (onde haveria NA após o join).
+frequencias_comparadas <- dplyr::full_join(freq_br, freq_poesia, by = "word") %>%
+  dplyr::full_join(freq_prosa, by = "word") %>%
+  dplyr::mutate_all(~replace(., is.na(.), 0))
+
+cat("\nExemplo das frequências comparadas (primeiras 10 linhas):\n")
+print(head(frequencias_comparadas, 10))
+
+# 2. Análises de Comparação Específicas
+
+# Exemplo 1: Palavras mais características da Poesia em relação ao Corpus BR
+# Calculamos uma proporção para ver quais palavras são relativamente mais frequentes na poesia
+# em comparação com o corpus geral. Adicionamos +1 no denominador para evitar divisão por zero.
+freq_poesia_caracteristicas <- frequencias_comparadas %>%
+  # Filtrar apenas palavras que aparecem na poesia.
+  dplyr::filter(freq_poesia > 0) %>%
+  dplyr::mutate(ratio_poesia_br = freq_poesia / (freq_corpus_br + 1)) %>%
+  dplyr::arrange(desc(ratio_poesia_br))
+
+cat("\nPalavras mais características da Poesia em relação ao Corpus do Português Brasileiro (top 20):\n")
+print(head(freq_poesia_caracteristicas, 20))
+
+# Exemplo 2: Palavras mais características da Prosa em relação ao Corpus BR
+freq_prosa_caracteristicas <- frequencias_comparadas %>%
+  dplyr::filter(freq_prosa > 0) %>%
+  dplyr::mutate(ratio_prosa_br = freq_prosa / (freq_corpus_br + 1)) %>%
+  dplyr::arrange(desc(ratio_prosa_br))
+
+cat("\nPalavras mais características da Prosa em relação ao Corpus do Português Brasileiro (top 20):\n")
+print(head(freq_prosa_caracteristicas, 20))
+
+# Exemplo 3: Palavras de alta frequência em comum nos três corpora
+# Define um limiar mínimo de ocorrências para serem consideradas "alta frequência" em cada corpus.
+palavras_comuns_alta_freq <- frequencias_comparadas %>%
+  dplyr::filter(freq_corpus_br > 500, # Ajuste estes valores conforme o tamanho do seu corpus
+                freq_poesia > 50,
+                freq_prosa > 50) %>%
+  # Ordena pela soma das frequências para ver as mais comuns globalmente.
+  dplyr::arrange(desc(freq_corpus_br + freq_poesia + freq_prosa))
+
+cat("\nPalavras de alta frequência em comum nos três corpora (top 20):\n")
+print(head(palavras_comuns_alta_freq, 20))
+
+# 3. Visualização (Gráficos)
+
+# Definir o número de palavras para visualizar nos gráficos de dispersão (para evitar sobreposição).
+top_n_words_plot <- 100
+
+# Gráfico de Dispersão: Frequência de Palavras - Poesia vs. Corpus BR
+# Usamos scale_x_log10() e scale_y_log10() porque as frequências variam muito,
+# e a escala logarítmica ajuda a visualizar melhor a distribuição.
+plot_data_poesia_br <- frequencias_comparadas %>%
+  # Ordena para pegar as palavras mais frequentes combinadas.
+  dplyr::arrange(desc(freq_poesia + freq_corpus_br)) %>%
+  head(top_n_words_plot)
+
+ggplot(plot_data_poesia_br, aes(x = freq_corpus_br, y = freq_poesia, label = word)) +
+  geom_point(alpha = 0.6, color = "#6A5ACD") + # Cor roxa vibrante
+  geom_text(size = 3, vjust = 1.5, check_overlap = TRUE, color = "#483D8B") + # Cor mais escura para o texto
+  labs(title = "Frequência de Palavras: Poesia vs. Corpus do Português Brasileiro",
+       x = "Frequência no Corpus BR (escala log)",
+       y = "Frequência na Poesia (escala log)") +
+  theme_minimal(base_size = 12) + # Aumenta o tamanho base da fonte
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title = element_text(face = "bold"),
+        panel.grid.major = element_line(color = "grey90"),
+        panel.grid.minor = element_line(color = "grey95")) +
+  scale_x_log10() +
+  scale_y_log10()
+
+# Gráfico de Dispersão: Frequência de Palavras - Prosa vs. Corpus BR
+plot_data_prosa_br <- frequencias_comparadas %>%
+  dplyr::arrange(desc(freq_prosa + freq_corpus_br)) %>%
+  head(top_n_words_plot)
+
+ggplot(plot_data_prosa_br, aes(x = freq_corpus_br, y = freq_prosa, label = word)) +
+  geom_point(alpha = 0.6, color = "#20B2AA") + # Cor azul-esverdeado vibrante
+  geom_text(size = 3, vjust = 1.5, check_overlap = TRUE, color = "#008B8B") + # Cor mais escura para o texto
+  labs(title = "Frequência de Palavras: Prosa vs. Corpus do Português Brasileiro",
+       x = "Frequência no Corpus BR (escala log)",
+       y = "Frequência na Prosa (escala log)") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title = element_text(face = "bold"),
+        panel.grid.major = element_line(color = "grey90"),
+        panel.grid.minor = element_line(color = "grey95")) +
+  scale_x_log10() +
+  scale_y_log10()
+
+
+# Gráficos de Barras para as Top N Palavras de cada Corpus
+# Ajuste 'head(10)' para o número de palavras que você deseja exibir.
+
+# Top 10 palavras na Poesia
+ggplot(head(freq_poesia, 10), aes(x = reorder(word, -freq_poesia), y = freq_poesia)) +
+  geom_bar(stat = "identity", fill = "#FF7F50") + # Cor coral
+  labs(title = "Top 10 Palavras na Poesia", x = "Palavra", y = "Frequência") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"), # Gira e bold o texto do eixo X
+        axis.title = element_text(face = "bold"))
+
+# Top 10 palavras na Prosa
+ggplot(head(freq_prosa, 10), aes(x = reorder(word, -freq_prosa), y = freq_prosa)) +
+  geom_bar(stat = "identity", fill = "#6495ED") + # Cor azul cornflower
+  labs(title = "Top 10 Palavras na Prosa", x = "Palavra", y = "Frequência") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        axis.title = element_text(face = "bold"))
+
+# Top 10 palavras no Corpus do Português Brasileiro
+ggplot(head(freq_br, 10), aes(x = reorder(word, -freq_corpus_br), y = freq_corpus_br)) +
+  geom_bar(stat = "identity", fill = "#DAA520") + # Cor dourada
+  labs(title = "Top 10 Palavras no Corpus do Português Brasileiro", x = "Palavra", y = "Frequência") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        axis.title = element_text(face = "bold"))
+
+
+
